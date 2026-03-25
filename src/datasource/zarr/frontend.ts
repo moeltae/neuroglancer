@@ -260,6 +260,93 @@ function getNormalizedDimensionNames(
   });
 }
 
+// Biom: probe for scale level arrays inside a group that has no OME metadata.
+// Tries numeric (0/, 1/, 2/...) and s-prefixed (s0/, s1/, s2/...) naming conventions.
+async function probeGroupForScaleLevels(
+  sharedKvStoreContext: SharedKvStoreContext,
+  groupUrl: string,
+  options: {
+    zarrVersion: 2 | 3;
+    explicitDimensionSeparator: DimensionSeparator | undefined;
+  } & Partial<ProgressOptions>,
+): Promise<ZarrMultiscaleInfo | undefined> {
+  // Try both naming conventions in parallel
+  const probePatterns = [
+    ["0", "1", "2", "3", "4", "5"],
+    ["s0", "s1", "s2", "s3", "s4", "s5"],
+  ];
+
+  for (const pattern of probePatterns) {
+    // Try the first level to detect which pattern this group uses
+    const firstUrl = kvstoreEnsureDirectoryPipelineUrl(
+      joinBaseUrlAndPath(groupUrl, pattern[0]),
+    );
+    const firstMeta = await getMetadata(sharedKvStoreContext, firstUrl, {
+      ...options,
+      expectedNodeType: "array",
+    });
+    if (firstMeta === undefined) continue;
+
+    // Found the pattern — now probe remaining levels
+    const scaleArrays: { url: string; metadata: ArrayMetadata }[] = [
+      { url: firstUrl, metadata: firstMeta as ArrayMetadata },
+    ];
+    for (let i = 1; i < pattern.length; i++) {
+      const scaleUrl = kvstoreEnsureDirectoryPipelineUrl(
+        joinBaseUrlAndPath(groupUrl, pattern[i]),
+      );
+      const meta = await getMetadata(sharedKvStoreContext, scaleUrl, {
+        ...options,
+        expectedNodeType: "array",
+      });
+      if (meta === undefined) break; // No more levels
+      scaleArrays.push({ url: scaleUrl, metadata: meta as ArrayMetadata });
+    }
+
+    // Build multiscale info from the base (first) array
+    const baseMeta = scaleArrays[0].metadata;
+    const names = getNormalizedDimensionNames(
+      baseMeta.dimensionNames,
+      baseMeta.zarrVersion,
+    );
+    const unitsAndScales = baseMeta.dimensionUnits.map(parseDimensionUnit);
+    const modelSpace = makeCoordinateSpace({
+      names,
+      scales: Float64Array.from(Array.from(unitsAndScales, (x) => x.scale)),
+      units: Array.from(unitsAndScales, (x) => x.unit),
+      boundingBoxes: [
+        makeIdentityTransformedBoundingBox({
+          lowerBounds: new Float64Array(baseMeta.rank),
+          upperBounds: Float64Array.from(baseMeta.shape),
+        }),
+      ],
+    });
+
+    const baseTransform = matrix.createIdentity(
+      Float64Array,
+      baseMeta.rank + 1,
+    );
+    const scales: ZarrScaleInfo[] = scaleArrays.map((s) => ({
+      url: s.url,
+      transform: matrix.createIdentity(Float64Array, s.metadata.rank + 1),
+      metadata: s.metadata,
+    }));
+
+    console.log(
+      `[neuroglancer] Biom: discovered ${scales.length} scale levels in plain Zarr group using "${pattern[0]}" naming`,
+    );
+
+    return {
+      coordinateSpace: modelSpace,
+      dataType: baseMeta.dataType,
+      scales,
+      baseTransform,
+    };
+  }
+
+  return undefined;
+}
+
 function getMultiscaleInfoForSingleArray(
   url: string,
   metadata: ArrayMetadata,
@@ -526,19 +613,35 @@ export class ZarrDataSource implements KvStoreBasedDataSourceProvider {
             metadata.userAttributes,
             metadata.zarrVersion,
           );
-          if (omeMetadata === undefined) {
-            throw new Error("Neither array nor OME multiscale metadata found");
+          if (omeMetadata !== undefined) {
+            channelMetadata = omeMetadata.channels;
+            multiscaleInfo = await resolveOmeMultiscale(
+              sharedKvStoreContext,
+              omeMetadata.multiscale,
+              {
+                ...progressOptions,
+                zarrVersion: metadata.zarrVersion,
+                explicitDimensionSeparator: dimensionSeparator,
+              },
+            );
+          } else {
+            // Biom: no OME metadata — probe for scale level arrays (plain Zarr group)
+            const probed = await probeGroupForScaleLevels(
+              sharedKvStoreContext,
+              kvStoreUrl,
+              {
+                ...progressOptions,
+                zarrVersion: metadata.zarrVersion,
+                explicitDimensionSeparator: dimensionSeparator,
+              },
+            );
+            if (probed === undefined) {
+              throw new Error(
+                "Neither array, OME multiscale metadata, nor scale level arrays found",
+              );
+            }
+            multiscaleInfo = probed;
           }
-          channelMetadata = omeMetadata.channels;
-          multiscaleInfo = await resolveOmeMultiscale(
-            sharedKvStoreContext,
-            omeMetadata.multiscale,
-            {
-              ...progressOptions,
-              zarrVersion: metadata.zarrVersion,
-              explicitDimensionSeparator: dimensionSeparator,
-            },
-          );
         } else {
           multiscaleInfo = getMultiscaleInfoForSingleArray(
             kvStoreUrl,

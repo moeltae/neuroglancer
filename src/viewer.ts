@@ -46,6 +46,8 @@ import {
   addNewLayer,
   LayerManager,
   LayerSelectedValues,
+  makeLayer,
+  ManagedUserLayer,
   MouseSelectionState,
   SelectedLayerState,
   TopLevelLayerListSpecification,
@@ -232,6 +234,13 @@ export interface ViewerOptions
   showLayerDialog: boolean;
   inputEventBindings: InputEventBindings;
   resetStateWhenEmpty: boolean;
+  /**
+   * Biom: when true, skip creating top bar, layer bar, side panels, and status
+   * UI. Still creates WebGL canvas, navigation state, layer manager, chunk
+   * manager, and rendering layout. All state objects remain accessible for
+   * external control.
+   */
+  embeddedMode: boolean;
 }
 
 const defaultViewerOptions =
@@ -240,6 +249,7 @@ const defaultViewerOptions =
     : {
         showLayerDialog: true,
         resetStateWhenEmpty: true,
+        embeddedMode: false,
       };
 
 class TrackableViewerState extends CompoundTrackable {
@@ -517,6 +527,8 @@ export class Viewer extends RefCounted implements ViewerState {
 
   showLayerDialog: boolean;
   resetStateWhenEmpty: boolean;
+  /** Biom: when true, UI chrome is skipped — only rendering layout is created. */
+  embeddedMode: boolean;
 
   get inputEventMap() {
     return this.inputEventBindings.global;
@@ -581,7 +593,9 @@ export class Viewer extends RefCounted implements ViewerState {
     setViewerUiConfiguration(uiConfiguration, options);
 
     const optionsWithDefaults = { ...defaultViewerOptions, ...options };
-    const { resetStateWhenEmpty, showLayerDialog } = optionsWithDefaults;
+    const { resetStateWhenEmpty, showLayerDialog, embeddedMode } =
+      optionsWithDefaults;
+    this.embeddedMode = embeddedMode ?? false;
 
     for (const key of VIEWER_UI_CONTROL_CONFIG_OPTIONS) {
       this.uiControlVisibility[key] = this.makeUiControlVisibilityState(key);
@@ -669,8 +683,12 @@ export class Viewer extends RefCounted implements ViewerState {
       }),
     );
 
-    this.makeUI();
-    this.updateShowBorders();
+    if (this.embeddedMode) {
+      this.makeEmbeddedUI();
+    } else {
+      this.makeUI();
+      this.updateShowBorders();
+    }
 
     this.registerActionListeners();
     this.registerEventActionBindings();
@@ -1040,6 +1058,73 @@ export class Viewer extends RefCounted implements ViewerState {
     updateVisibility();
     this.registerDisposer(this.visibility.changed.add(updateVisibility));
   }
+
+  /**
+   * Biom: minimal UI setup for embedded mode — rendering layout only,
+   * no top bar, side panels, or button widgets.
+   */
+  private makeEmbeddedUI() {
+    const gridContainer = this.element;
+    gridContainer.classList.add("neuroglancer-viewer");
+    gridContainer.classList.add("neuroglancer-noselect");
+    gridContainer.style.display = "flex";
+    gridContainer.style.flexDirection = "column";
+
+    // Layout is essential — it manages slice view and perspective view panels
+    this.layout = this.registerDisposer(
+      new RootLayoutContainer(this, "4panel"),
+    );
+    // SidePanelManager is needed by layout even in embedded mode
+    this.sidePanelManager = this.registerDisposer(
+      new SidePanelManager(this.display, this.layout.element, this.visibility),
+    );
+    gridContainer.appendChild(this.sidePanelManager.element);
+
+    const updateVisibility = () => {
+      const shouldBeVisible = this.visibility.visible;
+      if (shouldBeVisible !== this.visible) {
+        gridContainer.style.visibility = shouldBeVisible ? "inherit" : "hidden";
+        this.visible = shouldBeVisible;
+      }
+    };
+    updateVisibility();
+    this.registerDisposer(this.visibility.changed.add(updateVisibility));
+  }
+
+  // ── Biom: Programmatic layer API ──────────────────────────────────────
+
+  /**
+   * Add a layer by name and spec. Returns the managed layer.
+   * @example viewer.addLayer('my-image', { type: 'image', source: 'zarr2://...' })
+   */
+  addLayer(name: string, spec: any): ManagedUserLayer {
+    const layer = makeLayer(this.layerSpecification, name, spec);
+    this.layerSpecification.add(layer);
+    return layer;
+  }
+
+  /**
+   * Remove a layer from the viewer.
+   */
+  removeLayer(layer: ManagedUserLayer): void {
+    this.layerManager.removeManagedLayer(layer);
+  }
+
+  /**
+   * Find a layer by name. Returns undefined if not found.
+   */
+  getLayerByName(name: string): ManagedUserLayer | undefined {
+    return this.layerManager.managedLayers.find((l) => l.name === name);
+  }
+
+  /**
+   * Get all managed layers.
+   */
+  getLayers(): readonly ManagedUserLayer[] {
+    return this.layerManager.managedLayers;
+  }
+
+  // ── End Biom API ────────────────────────────────────────────────────
 
   /**
    * Called once by the constructor to set up event handlers.

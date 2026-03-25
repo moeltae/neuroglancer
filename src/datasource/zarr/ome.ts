@@ -371,16 +371,37 @@ function parseOmeCoordinateTransform(
   transformJson: unknown,
 ): Float64Array<ArrayBuffer> {
   verifyObject(transformJson);
-  const transformType = verifyObjectProperty(
+  let transformType = verifyObjectProperty(
     transformJson,
     "type",
     verifyString,
   );
+
+  // Biom: infer transform type from available properties if type is empty/missing.
+  // Real-world OME-NGFF data (e.g. e11bio) sometimes has "" instead of "scale".
+  if (!transformType) {
+    const obj = transformJson as Record<string, unknown>;
+    if (obj.scale !== undefined) {
+      transformType = "scale";
+    } else if (obj.translation !== undefined) {
+      transformType = "translation";
+    } else if (obj.affine !== undefined) {
+      transformType = "affine";
+    } else {
+      console.warn(
+        "[neuroglancer] Empty coordinateTransform type with no inferrable properties, using identity",
+      );
+      return matrix.createIdentity(Float64Array, rank + 1);
+    }
+  }
+
   const parser = coordinateTransformParsers.get(transformType);
   if (parser === undefined) {
-    throw new Error(
-      `Unsupported coordinate transform type: ${JSON.stringify(transformType)}`,
+    // Biom: gracefully fall back instead of crashing on unknown transform types
+    console.warn(
+      `[neuroglancer] Unsupported coordinate transform type: ${JSON.stringify(transformType)}, using identity`,
     );
+    return matrix.createIdentity(Float64Array, rank + 1);
   }
   return parser(rank, transformJson) as Float64Array<ArrayBuffer>;
 }
@@ -743,31 +764,49 @@ export function parseOmeMetadata(
       return undefined;
     }
 
-    const version = ome == undefined ? multiscale.version : ome.version; // >0.4
+    let version = ome == undefined ? multiscale.version : ome.version; // >0.4
 
-    if (version === undefined) return undefined;
-    if (!SUPPORTED_OME_MULTISCALE_VERSIONS.has(version)) {
-      errors.push(
-        `OME multiscale metadata version ${JSON.stringify(
-          version,
-        )} is not supported`,
+    // Biom: if version is undefined, attempt parsing with "0.4" semantics (most permissive).
+    // Many real-world datasets omit the version field.
+    if (version === undefined) {
+      version = "0.4";
+      console.warn(
+        `[neuroglancer] OME multiscale metadata has no version, assuming ${version}`,
       );
-      continue;
+    }
+
+    if (!SUPPORTED_OME_MULTISCALE_VERSIONS.has(version)) {
+      // Biom: try "0.5" semantics for unsupported version strings instead of skipping entirely
+      console.warn(
+        `[neuroglancer] OME multiscale metadata version ${JSON.stringify(version)} is not directly supported, attempting with "0.5" semantics`,
+      );
+      version = "0.5";
     }
     if (version !== "0.4" && version !== "0.5-dev" && zarrVersion !== 3) {
-      errors.push(
-        `OME multiscale metadata version ${JSON.stringify(
-          version,
-        )} is not supported for zarr v${zarrVersion}`,
+      // Biom: for zarr v2, fall back to "0.4" semantics which works with any zarr version
+      console.warn(
+        `[neuroglancer] OME version ${JSON.stringify(version)} not supported for zarr v${zarrVersion}, falling back to "0.4" semantics`,
       );
+      version = "0.4";
+    }
+    // Biom: wrap in try/catch so a single broken multiscale entry doesn't crash everything
+    try {
+      const multiScaleInfo = parseOmeMultiscale(url, multiscale, version);
+      const channelMetadata = omero ? parseOmeroMetadata(omero) : undefined;
+      return { multiscale: multiScaleInfo, channels: channelMetadata };
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Unknown error parsing multiscale";
+      console.warn(`[neuroglancer] Failed to parse OME multiscale entry: ${msg}`);
+      errors.push(msg);
       continue;
     }
-    const multiScaleInfo = parseOmeMultiscale(url, multiscale, version);
-    const channelMetadata = omero ? parseOmeroMetadata(omero) : undefined;
-    return { multiscale: multiScaleInfo, channels: channelMetadata };
   }
   if (errors.length !== 0) {
-    throw new Error(errors[0]);
+    // Biom: return undefined instead of throwing — let frontend try single-array fallback
+    console.warn(
+      `[neuroglancer] All OME multiscale entries failed to parse: ${errors[0]}`,
+    );
   }
   return undefined;
 }

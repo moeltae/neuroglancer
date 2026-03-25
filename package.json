@@ -21,6 +21,7 @@
     "prepack": "node ./build_tools/build-package.ts --inplace",
     "postpack": "node ./build_tools/postpack.ts",
     "build": "node ./build_tools/cli.ts build",
+    "build:library": "node ./build_tools/cli.ts build --config rspack.library.config.ts --output dist/library",
     "build:watch": "node ./build_tools/cli.ts build --watch",
     "dev-server": "node ./build_tools/cli.ts serve",
     "dev-server-python": "node ./build_tools/cli.ts --python serve",
@@ -113,6 +114,7 @@
   "type": "module",
   "exports": {
     ".": "./src/main_module.ts",
+    "./biom": "./src/biom/index.ts",
     "./unstable/*.js": "./src/*.ts",
     "./unstable/*": "./src/*"
   },
