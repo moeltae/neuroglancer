@@ -8,10 +8,14 @@ Biom needs a deep integration with Neuroglancer for volumetric scientific data (
 
 - Fork created from `google/neuroglancer` at commit `4fe8d1c3`
 - Upstream remote set to `google/neuroglancer` for pulling updates
-- Biom currently loads neuroglancer as a pre-built UMD bundle from `/public/neuroglancer/`
-- Basic integration exists in `NeuroglancerViewer.tsx` (~1000 lines) — creates viewer, adds layers, syncs some state
-- Zarr v2 loading works via `|zarr2:` kvstore syntax but has issues with OME-NGFF metadata parsing
-- Precomputed format datasource is in the bundle but untested end-to-end
+- **Data source hardening complete**: graceful coordinateTransformations parsing, lenient version handling, plain Zarr group fallback
+- **Embedded mode**: `embeddedMode: true` option skips all UI chrome
+- **Programmatic layer API**: `addLayer()`, `removeLayer()`, `getLayerByName()`, `getLayers()`
+- **External integration API** (`src/biom/`): `NeuroglancerExternalEvents` + `NeuroglancerExternalControl`
+- **Library build**: `npm run build:library` → UMD bundle (1.4MB, down from 4.7MB)
+- **Exports**: Viewer, makeMinimalViewer, makeDefaultViewer, ExternalEvents, ExternalControl
+- Biom loads neuroglancer as a pre-built UMD bundle from `/public/neuroglancer/`
+- Integration in `NeuroglancerViewer.tsx` (~1000 lines) — creates viewer, adds layers, syncs some state
 
 ## What We Intend To Do
 
