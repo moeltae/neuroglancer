@@ -601,6 +601,10 @@ export class Viewer extends RefCounted implements ViewerState {
     if (this.embeddedMode) {
       this.showScaleBar.value = false;
       this.showAxisLines.value = false;
+      // This gates all UI controls including LayerBar, hover values, etc.
+      uiConfiguration.showUIControls.value = false;
+      uiConfiguration.showTopBar.value = false;
+      uiConfiguration.showPanelBorders.value = false;
     }
 
     for (const key of VIEWER_UI_CONTROL_CONFIG_OPTIONS) {
