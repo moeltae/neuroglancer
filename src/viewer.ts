@@ -597,6 +597,12 @@ export class Viewer extends RefCounted implements ViewerState {
       optionsWithDefaults;
     this.embeddedMode = embeddedMode ?? false;
 
+    // Biom: disable all visual chrome in embedded mode
+    if (this.embeddedMode) {
+      this.showScaleBar.value = false;
+      this.showAxisLines.value = false;
+    }
+
     for (const key of VIEWER_UI_CONTROL_CONFIG_OPTIONS) {
       this.uiControlVisibility[key] = this.makeUiControlVisibilityState(key);
     }

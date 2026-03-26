@@ -212,6 +212,9 @@ function addDisplayDimensionsWidget(
   layout: DataDisplayLayout,
   panel: RenderedDataPanel,
 ) {
+  // Biom: skip dimension labels in embedded mode
+  if ((layout.container.viewer as any).embeddedMode) return;
+
   const { navigationState } = panel;
   panel.element.appendChild(
     layout.registerDisposer(
@@ -233,6 +236,9 @@ function registerRelatedLayouts(
   panel: RenderedDataPanel,
   relatedLayouts: string[],
 ) {
+  // Biom: skip layout toggle buttons in embedded mode
+  if ((layout.container.viewer as any).embeddedMode) return;
+
   const controls = document.createElement("div");
   controls.className = "neuroglancer-data-panel-layout-controls";
   layout.registerDisposer(() => removeFromParent(controls));
