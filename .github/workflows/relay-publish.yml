@@ -23,13 +23,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
+      # @relay-sci lives on GitHub Packages, not npmjs. The scope must match the
+      # repository owner, which is why this repo is Relay-Sci/neuroglancer and not
+      # the personal fork. Auth is the built-in GITHUB_TOKEN; no PAT is required.
       - uses: actions/setup-node@v4
         with:
           node-version: "22.18"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@relay-sci"
 
       - run: npm ci
 
@@ -63,9 +70,9 @@ jobs:
         run: npm pack --dry-run
         working-directory: dist/relay-package
 
-      - name: Publish to npm
+      - name: Publish to GitHub Packages
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm publish
         working-directory: dist/relay-package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

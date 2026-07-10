@@ -30,7 +30,7 @@
 // Usage:
 //   npm run build:library
 //   node build_tools/pack-relay-bundle.mjs [version]
-//   npm publish dist/relay-package
+//   npm publish dist/relay-package   # -> GitHub Packages (@relay-sci scope)
 //
 // Version resolution, in order: argv[2], $RELAY_NG_VERSION, then
 // `<package.json version>-relay.1`.
@@ -114,9 +114,9 @@ await writeFile(
       license: "Apache-2.0",
       repository: {
         type: "git",
-        url: "git+https://github.com/moeltae/neuroglancer.git",
+        url: "git+https://github.com/Relay-Sci/neuroglancer.git",
       },
-      publishConfig: { access: "public" },
+      publishConfig: { registry: "https://npm.pkg.github.com" },
       files: ["dist"],
     },
     null,
