@@ -224,6 +224,22 @@ function parseOmeCoordinateSystem(coordinateSystem: unknown): CoordinateSpace {
 }
 
 function parseScaleTransform(rank: number, obj: unknown) {
+  // Biom: some real-world OME-NGFF writers (e.g. e11bio) emit a `type: "scale"`
+  // transform whose scale array is stored under a differently-named key. Adopt the
+  // first array-valued property that is not `type`. An explicit `scale` always wins.
+  // Distinct from the empty-`type` inference in parseOmeCoordinateTransform below:
+  // that one repairs a malformed type, this one repairs a malformed body.
+  if (typeof obj === "object" && obj !== null) {
+    const record = obj as Record<string, unknown>;
+    if (record.scale === undefined) {
+      for (const key of Object.keys(record)) {
+        if (key !== "type" && Array.isArray(record[key])) {
+          obj = { ...record, scale: record[key] };
+          break;
+        }
+      }
+    }
+  }
   const scales = verifyObjectProperty(obj, "scale", (values) =>
     parseFixedLengthArray(
       new Float64Array(rank),
@@ -371,11 +387,7 @@ function parseOmeCoordinateTransform(
   transformJson: unknown,
 ): Float64Array<ArrayBuffer> {
   verifyObject(transformJson);
-  let transformType = verifyObjectProperty(
-    transformJson,
-    "type",
-    verifyString,
-  );
+  let transformType = verifyObjectProperty(transformJson, "type", verifyString);
 
   // Biom: infer transform type from available properties if type is empty/missing.
   // Real-world OME-NGFF data (e.g. e11bio) sometimes has "" instead of "scale".
@@ -797,7 +809,9 @@ export function parseOmeMetadata(
     } catch (e) {
       const msg =
         e instanceof Error ? e.message : "Unknown error parsing multiscale";
-      console.warn(`[neuroglancer] Failed to parse OME multiscale entry: ${msg}`);
+      console.warn(
+        `[neuroglancer] Failed to parse OME multiscale entry: ${msg}`,
+      );
       errors.push(msg);
       continue;
     }

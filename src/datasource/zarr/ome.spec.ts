@@ -264,6 +264,46 @@ describe("OME-Zarr 0.6 coordinate transformations", () => {
     expect(space.units).toStrictEqual(["m", "m", "m"]);
   });
 
+  it("accepts a scale transform whose scale array is under a misnamed key", () => {
+    // Real-world OME-NGFF (e11bio) emits a `type: "scale"` transform whose scale array
+    // is not under the `scale` key. Adopt the first array-valued property that is not
+    // `type`. Axes are micrometer, so values come back in metres.
+    const attrs = makeOmeAttrsWithTransform({
+      type: "scale",
+      output: "physical",
+      scales: [10, 0.3, 2],
+    });
+    const metadata = parseOmeMetadata("test://", attrs, 3);
+    expect(metadata).toBeDefined();
+    const scales = metadata!.multiscale.coordinateSpace.scales;
+    expect(scales[0]).toBeCloseTo(1e-5);
+    expect(scales[1]).toBeCloseTo(3e-7);
+    expect(scales[2]).toBeCloseTo(2e-6);
+  });
+
+  it("still rejects a scale transform with no array-valued property", () => {
+    // `output` is a string, so there is nothing to adopt and the parse must still fail.
+    const attrs = makeOmeAttrsWithTransform({
+      type: "scale",
+      output: "physical",
+    });
+    expectOmeParseFailure(attrs, /Error parsing "scale" property/);
+  });
+
+  it("prefers an explicit scale key over a misnamed one", () => {
+    const attrs = makeOmeAttrsWithTransform({
+      type: "scale",
+      output: "physical",
+      scale: [10, 0.3, 2],
+      scales: [9, 9, 9],
+    });
+    const metadata = parseOmeMetadata("test://", attrs, 3);
+    const scales = metadata!.multiscale.coordinateSpace.scales;
+    expect(scales[0]).toBeCloseTo(1e-5);
+    expect(scales[1]).toBeCloseTo(3e-7);
+    expect(scales[2]).toBeCloseTo(2e-6);
+  });
+
   it("treats a non-supported transformation type as identity", () => {
     // Fork behaviour: rather than crashing on an unknown transform type, warn and fall
     // back to identity (ome.ts: "Biom: gracefully fall back instead of crashing").
@@ -513,7 +553,10 @@ describe("OME-Zarr 0.6 sequence transformation validation", () => {
       },
     };
 
-    expectOmeParseFailure(attrs, /output is "wrong_system" but expected "physical"/);
+    expectOmeParseFailure(
+      attrs,
+      /output is "wrong_system" but expected "physical"/,
+    );
   });
 
   it("should reject sequence transform with wrong input", () => {
