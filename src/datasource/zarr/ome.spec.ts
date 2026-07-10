@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseOmeMetadata } from "#src/datasource/zarr/ome.js";
 import { createIdentity } from "#src/util/matrix.js";
 
@@ -45,6 +45,22 @@ function makeOmeAttrsWithTransform(transform: any) {
       ],
     },
   };
+}
+
+/**
+ * The Relay fork deliberately does not throw on malformed OME metadata. parseOmeMetadata
+ * catches per-multiscale errors, warns, and returns undefined so the frontend can fall
+ * back to plain-array parsing (see ome.ts: "Biom: return undefined instead of throwing").
+ * Rejection is therefore observed as `undefined` plus a warning, not an exception.
+ */
+function expectOmeParseFailure(attrs: any, message: RegExp) {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(parseOmeMetadata("test://", attrs, 3)).toBeUndefined();
+    expect(warn.mock.calls.map((c) => c.join(" ")).join("\n")).toMatch(message);
+  } finally {
+    warn.mockRestore();
+  }
 }
 
 describe("OME-Zarr 0.6 coordinate transformations", () => {
@@ -248,14 +264,25 @@ describe("OME-Zarr 0.6 coordinate transformations", () => {
     expect(space.units).toStrictEqual(["m", "m", "m"]);
   });
 
-  it("should throw an error for non-supported transformation types", () => {
+  it("treats a non-supported transformation type as identity", () => {
+    // Fork behaviour: rather than crashing on an unknown transform type, warn and fall
+    // back to identity (ome.ts: "Biom: gracefully fall back instead of crashing").
     const attrs = makeOmeAttrsWithTransform({
       type: "non_existent_transform",
       output: "physical",
     });
-    expect(() => parseOmeMetadata("test://", attrs, 3)).toThrow(
-      'Error parsing "datasets" property: Unsupported coordinate transform type: "non_existent_transform"',
-    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const metadata = parseOmeMetadata("test://", attrs, 3);
+      expect(metadata!.multiscale.baseInfo.baseTransform).toStrictEqual(
+        new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+      );
+      expect(warn.mock.calls.map((c) => c.join(" ")).join("\n")).toMatch(
+        /Unsupported coordinate transform type: "non_existent_transform"/,
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -486,10 +513,7 @@ describe("OME-Zarr 0.6 sequence transformation validation", () => {
       },
     };
 
-    // This should throw an error
-    expect(() => parseOmeMetadata("test://", attrs, 3)).toThrow(
-      /output is "wrong_system" but expected "physical"/,
-    );
+    expectOmeParseFailure(attrs, /output is "wrong_system" but expected "physical"/);
   });
 
   it("should reject sequence transform with wrong input", () => {
@@ -518,10 +542,7 @@ describe("OME-Zarr 0.6 sequence transformation validation", () => {
       },
     };
 
-    // This should throw an error
-    expect(() => parseOmeMetadata("test://", attrs, 3)).toThrow(
-      /input is "wrong_path" but expected "array"/,
-    );
+    expectOmeParseFailure(attrs, /input is "wrong_path" but expected "array"/);
   });
 
   it("should reject nested sequence transforms", () => {
@@ -555,8 +576,8 @@ describe("OME-Zarr 0.6 sequence transformation validation", () => {
       },
     };
 
-    // This should throw an error
-    expect(() => parseOmeMetadata("test://", attrs, 3)).toThrow(
+    expectOmeParseFailure(
+      attrs,
       /sequence transformation MUST NOT be part of another sequence transformation/,
     );
   });
@@ -663,8 +684,8 @@ describe("OME-Zarr 0.6 sequence transformation validation", () => {
       },
     };
 
-    // This should throw an error as the chain is broken
-    expect(() => parseOmeMetadata("test://", attrs, 3)).toThrow(
+    expectOmeParseFailure(
+      attrs,
       /transform 0 has output "intermediate" but transform 1 has input "wrong_system"/,
     );
   });
