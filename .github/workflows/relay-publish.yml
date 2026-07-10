@@ -1,0 +1,71 @@
+name: relay-publish
+
+# Gates the Relay fork's Zarr changes and publishes the prebuilt UMD bundle as
+# @relay-sci/neuroglancer.
+#
+# The gate exists because a 129-byte OME-NGFF scale-transform fallback once lived only
+# inside a minified bundle committed to Relay-Sci/relay, never in source. Any rebuild
+# silently reverted it. Now: if the fallback is lost, the vitest job fails, and
+# pack-relay-bundle.mjs additionally refuses to package the regressed bundle.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "src/datasource/zarr/**"
+      - "src/biom/**"
+      - "build_tools/pack-relay-bundle.mjs"
+      - "rspack.library.config.ts"
+      - ".github/workflows/relay-publish.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      # The gate. Covers the scale-transform fallback and the fork's non-throwing
+      # OME parsing semantics.
+      - name: Test zarr datasource
+        run: npx vitest --run src/datasource/zarr
+
+      - name: Build the UMD library bundle
+        run: npm run build:library
+
+      # Belt and braces. Asserts the fallback survived minification. Note this checks a
+      # precise minified pattern: a naive `grep Object.keys` matches 8 unrelated call
+      # sites and passes even on a regressed build.
+      - name: Assert the scale fallback survived minification
+        run: |
+          if ! grep -qE 'void 0===[A-Za-z_$]{1,4}\.scale' dist/library/neuroglancer.bundle.js; then
+            echo "::error::OME-NGFF scale-transform fallback missing from the built bundle"
+            exit 1
+          fi
+
+      # Also enforced inside the packer, which exits 1 on a regressed bundle.
+      # On a tag build the version comes from the tag (`v2.41.2-relay.1`); the packer
+      # strips the leading `v`. On a PR build it falls back to the fork's own version.
+      - name: Assemble @relay-sci/neuroglancer
+        run: node build_tools/pack-relay-bundle.mjs
+        env:
+          RELAY_NG_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
+      - name: Show what would be published
+        run: npm pack --dry-run
+        working-directory: dist/relay-package
+
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm publish
+        working-directory: dist/relay-package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

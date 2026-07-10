@@ -60,10 +60,19 @@ if (!existsSync(libraryDir)) {
 const forkPkg = JSON.parse(
   await readFile(join(rootDir, "package.json"), "utf8"),
 );
-const version =
-  process.argv[2] ??
-  process.env.RELAY_NG_VERSION ??
+// `||` rather than `??`: CI passes an empty string when not building a tag, and an
+// empty version must fall through to the default rather than produce `@…@""`.
+// A leading `v` is stripped so a git tag (`v2.41.2-relay.1`) can be passed verbatim.
+const requestedVersion =
+  process.argv[2] ||
+  process.env.RELAY_NG_VERSION ||
   `${forkPkg.version}-relay.1`;
+const version = requestedVersion.replace(/^v/, "");
+
+if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+  console.error(`[pack-relay-bundle] not a valid semver version: ${version}`);
+  process.exit(1);
+}
 
 const bundlePath = join(libraryDir, "neuroglancer.bundle.js");
 if (!existsSync(bundlePath)) {
